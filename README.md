@@ -1,320 +1,954 @@
-# 🌾 SmartAgri_LK
-### Smart Climate-Resilient Agricultural Early Warning System
 
-> IoT + AI powered flood prediction and multi-channel early-warning platform protecting paddy farmers and rural agricultural communities from climate unpredictability.
+
+Yes. Since **October 3, 2026 is your hardware deadline**, I would make the combined project a single system with **two physical subsystems**, but build it in a way that lets you demonstrate the complete pipeline even if the AI/cloud side is still being developed.
+
+Sri Lanka has a strong justification for this direction: FAO identifies climate-resilient agrifood systems as an important need, and Sri Lanka's climate-related agricultural challenges include drought, flooding and water-management problems. Sri Lanka's climate commitments also explicitly include reducing post-harvest losses. ([FAOHome][1])
+
+# 🌾 Combined Project
+
+## **AgriShield**
+
+### An Intelligent Climate-Resilient Farming and Post-Harvest Management System
+
+The complete system:
+
+```text
+                         AGRISHIELD
+                             │
+              ┌──────────────┴──────────────┐
+              │                             │
+              ▼                             ▼
+       SMART FARM FIELD              SMART STORAGE
+              │                             │
+      ┌───────┼────────┐             ┌──────┼───────┐
+      │       │        │             │      │       │
+    Water   Weather   Soil         Temp  Humidity Camera
+      │       │        │             │      │       │
+      └───────┼────────┘             └──────┼───────┘
+              │                             │
+              ▼                             ▼
+        ESP32 CONTROL                 ESP32 CONTROL
+              │                             │
+        ┌─────┴──────┐                ┌─────┴─────┐
+        │            │                │           │
+      PUMP        DRAINAGE          FAN       COOLING
+        │            │                │           │
+        └────────────┴────────────────┴───────────┘
+                             │
+                             ▼
+                       BACKEND + AI
+                             │
+                             ▼
+                        DASHBOARD
+```
+
+The important thing is that **both sides physically do something**.
 
 ---
 
-## Table of Contents
+# 1. What exactly are we building?
 
-1. [Problem Statement](#1-problem-statement)
-2. [Solution Overview](#2-solution-overview)
-3. [System Architecture](#3-system-architecture)
-4. [Repository Structure](#4-repository-structure)
-5. [Component Deep-Dive](#5-component-deep-dive)
-   - [5.1 Firmware (C++ / ESP32)](#51-firmware-c--esp32)
-   - [5.2 Cloud Backend & ML Engine](#52-cloud-backend--ml-engine)
-   - [5.3 Mobile App (Farmers)](#53-mobile-app-farmers)
-   - [5.4 Web Dashboard (Officers / Hierarchy)](#54-web-dashboard-officers--hierarchy)
-   - [5.5 SMS Fallback Channel](#55-sms-fallback-channel)
-6. [Data Sources & Datasets](#6-data-sources--datasets)
-7. [Communication & Fault Tolerance](#7-communication--fault-tolerance)
-8. [Security Model](#8-security-model)
-9. [Implementation Roadmap](#9-implementation-roadmap)
-10. [Getting Started](#10-getting-started)
-11. [Testing & Validation Strategy](#11-testing--validation-strategy)
-12. [Cost Breakdown (Per Node)](#12-cost-breakdown-per-node)
-13. [Team & Contribution Guide](#13-team--contribution-guide)
-14. [License](#14-license)
+### Module 1 — Smart Field
+
+It monitors:
+
+* Soil moisture
+* Field water level
+* Rainfall
+* Temperature
+* Humidity
+* Water flow
+
+Then controls:
+
+* Irrigation pump
+* Irrigation valve
+* Drainage mechanism
+
+Example:
+
+```text
+Soil dry
++
+No rain
++
+Water available
+
+        ↓
+
+IRRIGATE
+```
+
+But:
+
+```text
+Heavy rain
++
+Water level rising
++
+Soil already saturated
+
+        ↓
+
+STOP IRRIGATION
+        ↓
+OPEN DRAINAGE
+```
+
+That is the **climate-resilience part**.
+
+Sri Lanka's recent agricultural situation makes this particularly relevant: FAO reports that Cyclone Ditwah affected more than 129,000 hectares of agricultural land and over 227,000 farming households, with damaged irrigation infrastructure among the problems reported. ([FAOHome][2])
 
 ---
 
-## 1. Problem Statement
+# 2. Smart Storage
 
-Sri Lanka's paddy sector — supporting **1.5M+ smallholder farmers** — is repeatedly devastated by flash floods during Maha/Yala seasons. Existing gaps:
+After harvesting:
 
-- **No field-level early warning.** District-level forecasts don't translate to "your field, in 3 hours."
-- **App-based solutions fail in rural areas** — low smartphone penetration, patchy 4G/data affordability, literacy and language barriers.
-- **Manual sluice-gate and irrigation decisions** are reactive, not predictive.
-- **Disconnected data silos** — meteorological, hydrological, and reservoir-release data aren't fused into one actionable signal.
-
-## 2. Solution Overview
-
-AgriShield is a **hybrid, tiered-access platform** — it doesn't force every user onto one channel:
-
-| User | Device Reality | Channel |
-|---|---|---|
-| Smallholder farmer (no smartphone) | Feature phone | **SMS in Sinhala/Tamil** |
-| Progressive farmer (has smartphone) | Android device | **AgriShield Farmer App** (offline-first, push + SMS fallback) |
-| Agricultural / Irrigation Officer | Desktop/tablet | **Web GIS Dashboard** |
-| District / Ministry hierarchy | Desktop | **Web Dashboard — aggregated multi-district view, role-based access** |
-
-The core pipeline: **Solar ESP32 sensor nodes → Cloud AI risk engine → fan-out to SMS, mobile push, and web dashboard simultaneously.**
-
-## 3. System Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ FIELD EDGE LAYER (C++ / ESP32)                                           │
-│                                                                          │
-│  JSN-SR04T Ultrasonic ─┐                                                 │
-│  Capacitive Soil Sensor─┼──▶ ESP32-WROOM-32 ──▶ SIM800L (GSM/GPRS)      │
-│  Solar Panel + Li-ion ──┘         │                                      │
-│                                    │ HTTPS POST (batched JSON)           │
-└────────────────────────────────────┼─────────────────────────────────────┘
-                                     ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│ CLOUD INGESTION LAYER                                                    │
-│  FastAPI Telemetry Gateway ──▶ TimescaleDB/PostgreSQL (time-series)     │
-│  + OpenWeatherMap / Open-Meteo forecast ingestion (cron)                 │
-│  + Irrigation Dept. reservoir release feed (scraper/API)                 │
-└────────────────────────────────────┼─────────────────────────────────────┘
-                                     ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│ AI / PREDICTIVE ENGINE                                                   │
-│  Feature store ──▶ XGBoost/LightGBM inundation-probability model        │
-│  + rule-based override layer (sensor-fault & rate-of-rise guards)        │
-│  + risk-scoring service (0–100, per field polygon)                       │
-└──────┬───────────────────────┬───────────────────────┬───────────────────┘
-       ▼                       ▼                       ▼
-┌─────────────┐      ┌───────────────────┐   ┌────────────────────────┐
-│ SMS Gateway │      │ Push Notification │   │ Officer Web Dashboard  │
-│ (Sinhala/   │      │ Service (Farmer   │   │ (React + GIS map +     │
-│  Tamil)     │      │  Mobile App)      │   │  sluice-gate control)  │
-└─────────────┘      └───────────────────┘   └────────────────────────┘
+```text
+Farm
+ ↓
+Harvest
+ ↓
+AgriShield Storage
+ ↓
+Market
 ```
 
-## 4. Repository Structure
+Inside the storage chamber:
 
-```
-agrishield/
-├── firmware/                 # C++ / PlatformIO / ESP32 source
-│   ├── src/
-│   │   ├── main.cpp
-│   │   ├── sensors/          # UltrasonicSensor.cpp, SoilMoisture.cpp
-│   │   ├── comms/            # GsmModem.cpp (SIM800L), OfflineBuffer.cpp
-│   │   ├── power/            # SolarManager.cpp, DeepSleep.cpp
-│   │   └── config/           # device_config.h, secrets.h (gitignored)
-│   ├── platformio.ini
-│   └── test/                 # PlatformIO unit tests (Unity framework)
-│
-├── backend/                  # Cloud engine
-│   ├── app/
-│   │   ├── main.py           # FastAPI entrypoint
-│   │   ├── ingestion/        # telemetry, weather, reservoir feeds
-│   │   ├── ml/                # training pipeline, model registry, inference
-│   │   ├── alerts/            # SMS + push dispatch, message templates (si/ta/en)
-│   │   └── db/                 # SQLAlchemy models, Alembic migrations
-│   ├── requirements.txt
-│   └── tests/
-│
-├── mobile-app/                # Farmer-facing app (Flutter)
-│   ├── lib/
-│   │   ├── screens/           # field_status, alerts, recommendations
-│   │   ├── services/          # offline_cache, push_handler, i18n
-│   │   └── l10n/               # si.arb, ta.arb, en.arb
-│   └── pubspec.yaml
-│
-├── web-dashboard/              # Officer / hierarchy console (React + Vite)
-│   ├── src/
-│   │   ├── pages/               # LiveMap, SluiceControl, DistrictOverview
-│   │   ├── components/
-│   │   └── services/api.ts
-│   └── package.json
-│
-├── ml-notebooks/                # Model research & experiments (Jupyter)
-├── docs/                         # Architecture decision records, hardware BOM
-└── README.md
+```text
+Temperature
+Humidity
+CO₂ / air quality
+Camera
+Weight
 ```
 
-## 5. Component Deep-Dive
+The controller monitors conditions.
 
-### 5.1 Firmware (C++ / ESP32)
+Then:
 
-**Stack:** PlatformIO + Arduino framework, C++17.
+```text
+Temperature ↑
+Humidity ↑
+Visual quality ↓
 
-Key responsibilities per 15-minute wake cycle:
+        ↓
 
-1. Wake from deep sleep (timer-triggered, RTC).
-2. Take **10 ultrasonic + 10 soil-moisture readings**, apply a **median filter** to reject outliers.
-3. Compare against rolling average; if deviation **>300%**, tag `SENSOR_FAULT` instead of transmitting a raw anomalous value.
-4. Package reading as compact JSON, POST via SIM800L over GPRS.
-5. On failure, append to a **circular buffer in flash (up to 200 records)**; batch-upload on reconnect.
-6. Return to deep sleep — target **<3 mA average draw** for multi-week solar autonomy even in low-sun conditions.
+SPOILAGE RISK ↑
 
-```cpp
-// firmware/src/main.cpp (simplified loop)
-void setup() {
-  Sensors::init();
-  Gsm::init();
-  OfflineBuffer::loadFromFlash();
-}
+        ↓
 
-void loop() {
-  SensorReading reading = Sensors::takeFilteredReading();
-  if (Sensors::isFaulty(reading)) {
-    Dashboard::flagFault(reading);
-  } else if (!Gsm::isConnected()) {
-    OfflineBuffer::store(reading);
-  } else {
-    OfflineBuffer::flushIfAny();
-    Gsm::postTelemetry(reading);
-  }
-  Power::enterDeepSleep(FIFTEEN_MINUTES);
-}
+Fan / ventilation
+        +
+Cooling
+        +
+Farmer alert
 ```
 
-**Hardware BOM (per node):**
+Sri Lanka's national climate commitments specifically identify reduction of post-harvest losses as an agricultural priority. ([FAOLEX][3])
 
-| Component | Purpose |
-|---|---|
-| ESP32-WROOM-32 | Main MCU, deep-sleep capable |
-| JSN-SR04T (waterproof) | Water-level distance sensing |
-| Capacitive soil moisture sensor | Corrosion-resistant moisture sensing |
-| SIM800L | GSM/GPRS uplink |
-| 5V/6W solar panel + 18650 Li-ion + TP4056 | Power autonomy |
-| IP65 enclosure | Field durability against monsoon exposure |
+---
 
-### 5.2 Cloud Backend & ML Engine
+# 🧠 3. AI layer
 
-- **API layer:** FastAPI (async), deployed serverless (e.g. AWS Lambda + API Gateway or a lightweight VPS for the hackathon/pilot phase).
-- **Storage:** PostgreSQL + TimescaleDB extension for efficient time-series queries on sensor history.
-- **Model:** Gradient-boosted trees (XGBoost/LightGBM) predicting **field inundation probability** over a 2–6 hour horizon, trained on fused sensor + weather + reservoir-release + historical flood-extent features.
-- **Feature set:** rate-of-rise of water level, soil saturation, upstream rainfall accumulation (3h/6h/24h), reservoir discharge rate, field elevation/slope (from DEM), historical flood recurrence for that field polygon.
-- **Retraining cadence:** scheduled retraining each season using newly logged ground-truth flood events (officer-confirmed via the dashboard) to correct model drift.
-- **Alert dispatch:** on risk score crossing threshold, the alerts service fans out to SMS + mobile push + dashboard websocket simultaneously, using pre-approved templates in Sinhala, Tamil, and English.
+Don't start with complicated AI.
 
-### 5.3 Mobile App (Farmers)
+Build it in stages.
 
-**Stack:** Flutter (single codebase for Android — the dominant rural device OS).
+### Level 1 — Rule engine
 
-Designed for **low-literacy, low-connectivity, non-technical users**:
-
-- **Offline-first:** last-known field status and recommendations cached locally; syncs opportunistically.
-- **Push notifications** as the primary channel when data is available, with **automatic SMS fallback** if the app hasn't been opened in the last hour or push delivery fails — no farmer is left uninformed for lack of data balance.
-- **Icon-driven, minimal-text UI**: a traffic-light field-status widget (green/amber/red) before any text.
-- **Full Sinhala/Tamil/English localization** via Flutter's `intl`/`.arb` files, with a large-font, high-contrast "elder mode."
-- **Voice playback of alerts** (text-to-speech) for low-literacy users — tap a speaker icon to hear the warning read aloud.
-- **One-tap "Confirm Action Taken"** — farmer taps to confirm they've opened drainage/moved crops, feeding back into officer dashboard compliance tracking.
-
-### 5.4 Web Dashboard (Officers / Hierarchy)
-
-**Stack:** React + Vite + a mapping library (e.g. Leaflet/Mapbox GL) for GIS overlays.
-
-- **Live risk map** — every registered field rendered as a polygon, color-coded by current risk score.
-- **Role-based access control (RBAC):** Field Officer (single division), District Officer (aggregated view across divisions), Ministry/Hierarchy (national rollup + trend analytics).
-- **Sluice-gate alert & control log** — automated alerts to irrigation engineers, with a manual override/acknowledge workflow.
-- **Sensor health panel** — surfaces `SENSOR_FAULT` flags and battery/solar-charge telemetry per node for maintenance dispatch.
-- **Historical replay** — scrub through past flood events to validate model calls against what actually happened (ground-truth labeling loop).
-
-### 5.5 SMS Fallback Channel
-
-Retained as the **universal baseline channel** — works on any feature phone, no data plan required. Delivered through a local telecom SMS gateway/aggregator API, in the exact bilingual format from the original design (warning + numbered action steps), keyed to a short field ID (e.g. `POL-112`) so multi-field farmers know which plot is at risk.
-
-## 6. Data Sources & Datasets
-
-| Dataset | Use | Link |
-|---|---|---|
-| NASA POWER | Historical rainfall, humidity, surface wetness for feature engineering & backtesting | https://power.larc.nasa.gov/ |
-| JRC/Google Global Surface Water | Historical surface-water dynamics & flood extent maps for labeling | https://global-surface-water.appspot.com/ |
-| Open-Meteo API | Real-time & forecast rainfall, soil moisture, atmospheric data | https://open-meteo.com/ |
-| Humanitarian Data Exchange – Sri Lanka | River basin boundaries, historical disaster statistics | https://data.humdata.org/group/lka |
-| Copernicus / Sentinel-1 SAR imagery | Radar-based flood-extent detection (cloud-penetrating, useful for monsoon conditions) | https://scihub.copernicus.eu/ |
-| SRTM / Copernicus DEM | Field elevation & slope for hydrological modeling | https://dwtkns.com/srtm30m/ |
-| Sri Lanka Dept. of Meteorology (open bulletins) | Localized short-term forecasts & advisories | http://www.meteo.gov.lk/ |
-| Sri Lanka Irrigation Department | Reservoir water-level and discharge bulletins | http://www.irrigation.gov.lk/ |
-
-**Key research foundations:**
-
-1. IoT-based ultrasonic water-level monitoring reliability in paddy/runoff channels — validates the JSN-SR04T sensing approach used here (*IEEE Access*).
-2. Evidence that targeted SMS-based agricultural alerts measurably reduce harvest losses in developing-country contexts (*Quarterly Journal of Economics*).
-3. Gradient-boosted-tree flood-susceptibility models outperforming heavy physical hydraulic simulations on real-time inference latency (*Journal of Hydrology*).
-
-## 7. Communication & Fault Tolerance
-
-- **15-minute telemetry cycle** with median-filtered readings.
-- **Offline buffering** — up to 200 cached readings on-device flash during GSM outages, batch-flushed on reconnect.
-- **Anomaly guard** — >300% deviation from rolling average → `SENSOR_FAULT` flag on dashboard instead of a false alert to farmers, preventing warning fatigue.
-- **Multi-channel redundancy** — if push delivery to the mobile app fails, SMS is dispatched automatically as a fallback for that farmer within minutes.
-
-## 8. Security Model
-
-- **Device-level:** per-node API keys provisioned at manufacture, rotated via OTA config push; TLS for all HTTPS telemetry.
-- **Backend:** JWT-based auth for dashboard/app sessions; RBAC enforced at the API layer, not just UI.
-- **Data privacy:** farmer phone numbers stored hashed/encrypted at rest; SMS gateway credentials held in a secrets manager, never in firmware source.
-- **Firmware:** signed OTA updates to prevent tampering with field-deployed nodes.
-
-## 9. Implementation Roadmap
-
-| Phase | Duration | Milestones |
-|---|---|---|
-| **1. Prototyping** | Month 1–2 | Firmware + single sensor node bench-tested; backend ingestion API live; base ML model on historical data |
-| **2. Cloud & App Development** | Month 3–4 | Mobile app (Flutter) MVP; web dashboard MVP; SMS gateway integration; RBAC |
-| **3. Pilot Deployment** | Month 5–7 | 20–30 nodes deployed in one flood-prone division (e.g. Polonnaruwa); ground-truth feedback loop with officers |
-| **4. Nationwide Scale-Up** | Month 8+ | Multi-district rollout; model retraining pipeline; insurer/B2G integrations |
-
-## 10. Getting Started
-
-### Prerequisites
-- Python 3.10+
-- PostgreSQL 15 + TimescaleDB extension
-- PlatformIO CLI (ESP32 firmware)
-- Flutter SDK 3.x (mobile app)
-- Node.js 18+ (web dashboard)
-
-### Backend
-```bash
-git clone https://github.com/your-team/agrishield.git
-cd agrishield/backend
-pip install -r requirements.txt
-python manage.py db upgrade
-uvicorn app.main:app --reload --port 8000
+```text
+IF soil_moisture < threshold
+AND rain = false
+THEN irrigation = ON
 ```
 
-### Firmware
-```bash
-cd agrishield/firmware
-pio run --target upload
-pio device monitor
+### Level 2 — Prediction
+
+Use historical sensor data:
+
+```text
+Temperature
+Humidity
+Soil moisture
+Rainfall
+Water level
+        ↓
+      ML model
+        ↓
+Irrigation requirement
 ```
 
-### Mobile App
-```bash
-cd agrishield/mobile-app
-flutter pub get
-flutter run
+### Level 3 — Storage prediction
+
+```text
+Temperature
+Humidity
+CO₂
+Image
+Storage duration
+        ↓
+      AI model
+        ↓
+Spoilage risk
 ```
 
-### Web Dashboard
-```bash
-cd agrishield/web-dashboard
-npm install
-npm run dev
+### Level 4 — Computer vision
+
+```text
+Camera
+  ↓
+Crop image
+  ↓
+CNN / lightweight vision model
+  ↓
+Quality classification
 ```
 
-## 11. Testing & Validation Strategy
+Don't make AI the first thing you build. **Get the hardware working first.**
 
-- **Firmware:** Unity framework unit tests for filtering/fault-detection logic; bench simulation of GSM dropouts.
-- **Backend:** Pytest for ingestion & alert-dispatch logic; load-testing telemetry endpoint for a full node fleet.
-- **ML:** Backtesting against historical flood events (Global Surface Water dataset) for precision/recall on the inundation-probability threshold; officer-confirmed ground truth feeds a continuous validation loop.
-- **Mobile/Web:** Field usability testing with actual farmers for the app's icon/voice UX, and with officers for dashboard workflow fit.
+---
 
-## 12. Cost Breakdown (Per Node)
+# 🛒 What you need to buy from Tronic
 
-| Item | Approx. Cost (LKR) |
-|---|---|
-| ESP32 + sensors + SIM800L | ~8,000 |
-| Solar panel + battery + charge controller | ~4,500 |
-| IP65 enclosure + mounting | ~2,000 |
-| **Total per node** | **< 15,000** |
+If by "Tronic shop" you mean TRONIC.LK in Nugegoda, it is listed as an electronics store at Sunethradevi Road. There are also electronic-parts suppliers around Colombo such as Unitech Trading (Pvt) Ltd - Colombo 11 if something is unavailable.
 
-## 13. Team & Contribution Guide
+## 🔴 MUST BUY
 
-- Branch naming: `feature/<component>-<short-desc>`, `fix/<component>-<short-desc>`
-- Firmware changes require a bench test log attached to the PR.
-- ML model changes require a before/after backtest metric comparison.
-- All farmer-facing copy (SMS templates, app strings) must be reviewed for Sinhala/Tamil accuracy before merge.
+### Controllers
 
-## 14. License
+| Item                              |   Quantity |
+| --------------------------------- | ---------: |
+| ESP32 development board           |      **2** |
+| ESP32-CAM / ESP32-S3 camera board |      **1** |
+| Breadboard                        |    **2–3** |
+| Jumper wire set                   | **2 sets** |
+| USB cables                        |      **3** |
+| 5V power supply                   |      **2** |
 
-Specify your team's chosen license here (e.g. MIT for the software stack; hardware designs under CERN-OHL if open-sourced).
+I recommend **two ESP32s**:
+
+```text
+ESP32 #1 → Field
+ESP32 #2 → Storage
+```
+
+This keeps the systems independent.
+
+---
+
+# 🌱 FIELD MODULE
+
+### Sensors
+
+| Component                                         | Qty | Purpose                |
+| ------------------------------------------------- | --: | ---------------------- |
+| Capacitive soil-moisture sensor                   |   2 | Soil condition         |
+| Waterproof water-level sensor / ultrasonic sensor |   1 | Field water level      |
+| DHT22 / SHT31                                     |   1 | Temperature + humidity |
+| Rain sensor                                       |   1 | Rain detection         |
+| Water-flow sensor                                 |   1 | Irrigation measurement |
+
+I'd buy **two soil sensors**, because one can fail during testing.
+
+### Actuators
+
+| Component           |    Qty |
+| ------------------- | -----: |
+| DC water pump       |      1 |
+| Relay/MOSFET module |    1–2 |
+| Solenoid valve      |      1 |
+| Small DC motor      |      1 |
+| Motor driver        |      1 |
+| Tubing              | enough |
+| Water container     |      1 |
+
+The **solenoid valve** controls water entering the field.
+
+The **motor** can operate your miniature drainage gate.
+
+---
+
+# 🍅 STORAGE MODULE
+
+### Sensors
+
+| Component                   | Qty |
+| --------------------------- | --: |
+| Temperature/humidity sensor |   1 |
+| CO₂ sensor                  |   1 |
+| Air-quality/VOC sensor      |   1 |
+| Load cell                   |   1 |
+| HX711 module                |   1 |
+| Camera                      |   1 |
+
+The load cell is actually useful because:
+
+```text
+Initial weight = 5 kg
+
+After storage = 4.7 kg
+```
+
+You can quantify weight loss.
+
+That gives you a proper experimental measurement.
+
+---
+
+# 🌬️ Storage actuators
+
+| Component                   |      Qty |
+| --------------------------- | -------: |
+| 5V/12V fan                  |      1–2 |
+| MOSFET/relay module         |        1 |
+| Small cooling/Peltier setup | Optional |
+| LED lighting                |        1 |
+| Buzzer                      |        1 |
+
+### Don't buy an expensive refrigeration system yet.
+
+For your first prototype:
+
+**fan + ventilation + controlled temperature experiment**
+
+is enough.
+
+You can add Peltier cooling if the basic system works.
+
+---
+
+# ⚡ Power
+
+Get:
+
+* 12V adapter
+* 5V buck converter
+* 12V → 5V converter
+* terminal blocks
+* fuse
+* switches
+* wires
+* connectors
+
+For the final field version:
+
+```text
+Solar panel
+     ↓
+Charge controller
+     ↓
+Battery
+     ↓
+12V / 5V
+     ↓
+ESP32 + sensors + pump
+```
+
+But **solar is Phase 2**.
+
+Don't let solar power delay the October prototype.
+
+---
+
+# 🧰 Mechanical materials
+
+Don't forget these.
+
+You need:
+
+* PVC pipe
+* water container
+* small transparent box/container
+* acrylic sheets
+* cardboard/foam board for prototype
+* screws
+* nuts/bolts
+* brackets
+* tubing
+* hose connectors
+* waterproof enclosure
+
+The storage chamber can be made from a transparent plastic/acrylic box.
+
+The farm can be a miniature model:
+
+```text
+          RAIN
+           ↓↓↓
+ ┌───────────────────────┐
+ │       FARM            │
+ │                       │
+ │   🌱 🌱 🌱 🌱        │
+ │                       │
+ │ ────────────────────  │
+ │       WATER           │
+ │                       │
+ └──────────┬────────────┘
+            │
+       Drainage gate
+            │
+            ▼
+        Reservoir
+```
+
+---
+
+# 📦 Your October 3 shopping checklist
+
+Take this list to the shop.
+
+### Electronics
+
+```text
+[ ] ESP32 × 2
+[ ] ESP32-CAM / ESP32-S3 camera × 1
+[ ] Breadboard × 2
+[ ] Jumper wires
+[ ] USB cables
+[ ] Resistors
+[ ] LEDs
+[ ] Push buttons
+[ ] Buzzers
+[ ] 5V power supplies
+[ ] 12V power supply
+[ ] Buck converters
+[ ] Relay modules
+[ ] MOSFET modules
+```
+
+### Sensors
+
+```text
+[ ] Capacitive soil moisture × 2
+[ ] DHT22/SHT31 × 2
+[ ] Water level sensor × 1
+[ ] Rain sensor × 1
+[ ] Water flow sensor × 1
+[ ] CO₂ sensor × 1
+[ ] Air quality/VOC sensor × 1
+[ ] Load cell × 1
+[ ] HX711 × 1
+```
+
+### Actuators
+
+```text
+[ ] DC water pump
+[ ] Solenoid valve
+[ ] DC motor
+[ ] Motor driver
+[ ] 12V/5V fans × 2
+[ ] Optional Peltier module
+```
+
+### Mechanical
+
+```text
+[ ] PVC pipes
+[ ] Silicone tubing
+[ ] Water container
+[ ] Transparent storage box
+[ ] Acrylic/foam board
+[ ] Screws
+[ ] Nuts + bolts
+[ ] Wire terminals
+[ ] Cable ties
+[ ] Waterproof enclosure
+```
+
+---
+
+# 📅 Timeline to October 3
+
+Assuming **today is September 19**, you have roughly two weeks.
+
+Don't try to finish everything.
+
+## September 19–20
+
+### Architecture + requirements
+
+Finish:
+
+```text
+Problem statement
+       ↓
+System architecture
+       ↓
+Hardware list
+       ↓
+Data flow
+       ↓
+Prototype design
+```
+
+Also choose **one crop for the storage experiment**.
+
+I would choose something easy to observe visually, rather than trying to support many crops.
+
+---
+
+# September 21
+
+## Buy hardware
+
+Go to the electronics shop and get the complete **MUST BUY** list.
+
+Then inventory everything.
+
+Don't start assembling randomly.
+
+Create:
+
+```text
+/components
+    sensors
+    actuators
+    controllers
+    power
+
+/docs
+    architecture
+    circuit
+    BOM
+
+/software
+    field
+    storage
+    backend
+```
+
+---
+
+# September 22–23
+
+## Sensor testing
+
+Test each sensor independently.
+
+### Day 1
+
+```text
+ESP32
+ ↓
+Soil moisture
+ ↓
+Serial Monitor
+```
+
+Then:
+
+```text
+ESP32
+ ↓
+Temperature
+ ↓
+Serial Monitor
+```
+
+Then:
+
+```text
+ESP32
+ ↓
+Water level
+```
+
+Do this for every sensor.
+
+**Don't connect everything at once.**
+
+---
+
+# September 24
+
+## Field prototype
+
+Build:
+
+```text
+ESP32
+ │
+ ├── Soil moisture
+ ├── Water level
+ ├── Rain sensor
+ ├── Temperature
+ │
+ └── Relay
+       │
+       └── Pump
+```
+
+Get this working first.
+
+---
+
+# September 25
+
+## Automated irrigation
+
+Implement:
+
+```text
+IF soil dry
+AND water available
+AND no heavy rain
+
+→ Pump ON
+```
+
+Then:
+
+```text
+IF soil wet
+OR water level high
+
+→ Pump OFF
+```
+
+---
+
+# September 26
+
+## Flood control
+
+Build the miniature drainage mechanism.
+
+```text
+Water level LOW
+      ↓
+Gate closed
+
+Water level HIGH
+      ↓
+Gate OPEN
+```
+
+Now you have your first **physical autonomous agricultural system**.
+
+---
+
+# September 27
+
+## Storage prototype
+
+Build the storage box.
+
+```text
+┌─────────────────────┐
+│      CAMERA         │
+│                     │
+│   🍅 🍅 🍅 🍅       │
+│                     │
+│ Sensor              │
+│                     │
+│ Fan →→→→→           │
+└─────────────────────┘
+```
+
+Connect:
+
+```text
+Temperature
+Humidity
+CO₂
+Camera
+Weight
+Fan
+```
+
+---
+
+# September 28
+
+## Storage automation
+
+Implement:
+
+```text
+Humidity HIGH
+     ↓
+Fan ON
+```
+
+and:
+
+```text
+Temperature HIGH
+     ↓
+Cooling / ventilation ON
+```
+
+Don't worry about sophisticated AI yet.
+
+---
+
+# September 29–30
+
+## Backend
+
+Now connect everything.
+
+```text
+ESP32
+   ↓
+HTTP / MQTT
+   ↓
+Spring Boot
+   ↓
+PostgreSQL
+   ↓
+React dashboard
+```
+
+Store:
+
+```text
+timestamp
+device_id
+temperature
+humidity
+soil_moisture
+water_level
+rain
+flow_rate
+storage_weight
+```
+
+---
+
+# October 1
+
+## Dashboard
+
+Build only the important screens.
+
+### Farm
+
+```text
+🌱 FARM
+
+Soil Moisture     31%
+Water Level       22%
+Temperature       28°C
+
+Irrigation        OFF
+Drainage          OFF
+
+Flood Risk        LOW
+```
+
+### Storage
+
+```text
+🍅 STORAGE
+
+Temperature       24°C
+Humidity          76%
+Weight            4.82 kg
+
+Spoilage Risk     LOW
+Fan               ON
+```
+
+---
+
+# October 2
+
+## Integration + testing
+
+This is **NOT** the day to add new features.
+
+Test scenarios.
+
+### Scenario 1
+
+Dry soil:
+
+```text
+Dry soil
+ ↓
+Pump ON
+```
+
+### Scenario 2
+
+Heavy water:
+
+```text
+Water level HIGH
+ ↓
+Pump OFF
+ ↓
+Drainage ON
+```
+
+### Scenario 3
+
+Storage humidity high:
+
+```text
+Humidity HIGH
+ ↓
+Fan ON
+```
+
+### Scenario 4
+
+Storage temperature high:
+
+```text
+Temperature HIGH
+ ↓
+Cooling/ventilation ON
+```
+
+---
+
+# 🚨 October 3 — DEMO DAY
+
+Your demonstration should be something like this:
+
+### Step 1
+
+Show dry field.
+
+```text
+SOIL: DRY
+```
+
+System automatically starts irrigation.
+
+### Step 2
+
+Add water to the field.
+
+Water level increases.
+
+System detects:
+
+```text
+FLOOD RISK
+```
+
+Pump stops.
+
+Drainage activates.
+
+### Step 3
+
+Move to storage.
+
+Show:
+
+```text
+Temperature
+Humidity
+Weight
+Camera
+```
+
+Create an artificially unfavorable storage condition.
+
+System detects the change.
+
+Fan activates.
+
+### Step 4
+
+Dashboard
+
+Show everything remotely:
+
+```text
+             AGRISHIELD
+
+FIELD                 STORAGE
+
+Soil 31%              Temp 24°C
+Water 18%             Humidity 76%
+Pump OFF              Fan ON
+Flood LOW             Risk LOW
+```
+
+That's a **very demonstrable project**.
+
+---
+
+# ⚠️ One thing I would change from the original idea
+
+Don't promise:
+
+> "Our AI will predict crop spoilage with 95% accuracy."
+
+You won't have enough real-world data in two weeks.
+
+Instead, structure it:
+
+### Phase 1
+
+**Sensor-based decision engine**
+
+### Phase 2
+
+**Collect real data**
+
+### Phase 3
+
+**Train ML model**
+
+### Phase 4
+
+**Deploy ML prediction**
+
+That is scientifically much more defensible.
+
+---
+
+# 🎯 What you absolutely need working by October 3
+
+If time becomes tight, prioritize this order:
+
+```text
+                    PRIORITY
+
+                       1
+                ESP32 + sensors
+                       ↓
+                       2
+              Automated irrigation
+                       ↓
+                       3
+                Flood detection
+                       ↓
+                       4
+                Storage monitoring
+                       ↓
+                       5
+              Automatic ventilation
+                       ↓
+                       6
+                   Dashboard
+                       ↓
+                       7
+                     AI
+```
+
+**Do not sacrifice the physical hardware to build a fancy dashboard.**
+
+The heart of your project should be:
+
+> **Sense → Decide → Act → Measure**
+
+That's what turns AgriShield from a normal IoT agriculture project into an actual **agricultural automation and climate-resilience system**.
+
+### Where to buy
+
+For the October 3 shopping trip, the search returned TRONIC.LK in Nugegoda, plus Unitech Trading (Pvt) Ltd - Colombo 11 and Lankatronics (Pvt) Ltd. as other local electronics options. Availability of each exact sensor should be confirmed before travelling.
+
+[1]: https://www.fao.org/climate-change/news/news-detail/transparent-data--stronger-agrifood-action--colombo-workshop-sets-direction-for-cop31/en?utm_source=chatgpt.com "News detail | Climate change | Food and Agriculture Organization of the United Nations"
+[2]: https://www.fao.org/srilanka/news/detail/fao-appeals-for-usd-16.5-million-to-restore-livelihoods-after-cyclone-ditwah-devastates-sri-lanka-s-agrifood-sector/en?utm_source=chatgpt.com "FAO in Chile| News detail"
+[3]: https://faolex.fao.org/docs/pdf/srl239976.pdf?utm_source=chatgpt.com "<table id=\"e1\">"
