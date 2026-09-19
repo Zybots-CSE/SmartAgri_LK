@@ -1,11 +1,4 @@
 
-
-Yes. Since **October 3, 2026 is your hardware deadline**, I would make the combined project a single system with **two physical subsystems**, but build it in a way that lets you demonstrate the complete pipeline even if the AI/cloud side is still being developed.
-
-Sri Lanka has a strong justification for this direction: FAO identifies climate-resilient agrifood systems as an important need, and Sri Lanka's climate-related agricultural challenges include drought, flooding and water-management problems. Sri Lanka's climate commitments also explicitly include reducing post-harvest losses. ([FAOHome][1])
-
-# 🌾 Combined Project
-
 ## **AgriShield**
 
 ### An Intelligent Climate-Resilient Farming and Post-Harvest Management System
